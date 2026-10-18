@@ -10,4 +10,8 @@
 4. Once you open the public url set by Railway, you will need to put this token there. 
 5. After that press ctrl + j or cmd + j do `codex login --device-auth` to login to the codex cli.
 
+## Browser
+
+Agents can use T3 Code's built-in browser (the `preview_*` tools): it runs headless on the server and streams into the T3 UI. The image ships the system libraries it needs; T3 downloads the browser itself (~120 MB, into `~/.t3` on the volume) the first time an agent opens a page, so that first call may ask to retry after a minute.
+
 You are free to setup other developer tools, mcps and connectors as you wish.
