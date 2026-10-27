@@ -175,7 +175,8 @@ unset T3_SETUP_PASSWORD
 
 # Railway counts the kernel's cache of files this container touched as its
 # memory and never frees it without pressure (one npm install = hundreds of MB).
-( while sleep 900; do nice -n 19 drop-file-cache /data /tmp || true; done ) &
+# /opt and /usr too: the agent binaries in /opt/npm stay cached after a session ends.
+( while sleep 900; do nice -n 19 drop-file-cache /data /tmp /opt /usr || true; done ) &
 
 cd "$WORKSPACE_DIR"
 

@@ -24,6 +24,9 @@ ENV OPENCODE_DISABLE_AUTOUPDATE=1
 # Railway containers don't offer, so run it unsandboxed (the container is the
 # isolation boundary).
 ENV T3CODE_SERVER_BROWSER_SANDBOX=0
+# glibc gives each thread its own malloc arena; capping them trims ~15 MB off
+# T3's idle memory.
+ENV MALLOC_ARENA_MAX=2
 
 # docker-ce-cli and plugins: the CLI only. Railway can't run a Docker daemon, so
 # it talks to a remote one (DOCKER_HOST, see start.sh).
