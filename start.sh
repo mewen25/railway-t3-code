@@ -78,6 +78,58 @@ if [ -n "${GH_TOKEN:-}" ]; then
   as_t3 gh auth setup-git >/dev/null 2>&1 || true
 fi
 
+# Remote Docker: Railway can't run a Docker daemon, so the docker CLI talks to
+# one on another machine over SSH. Variables (Railway's Variables tab):
+#   DOCKER_HOST             ssh://user@host[:port]
+#   DOCKER_SSH_KEY          private key for that user (multi-line, or base64)
+#   DOCKER_SSH_KNOWN_HOSTS  optional: `ssh-keyscan host` output; without it the
+#                           first key seen is trusted and remembered
+if [[ "${DOCKER_HOST:-}" == ssh://* ]]; then
+  dest="${DOCKER_HOST#ssh://}"; dest="${dest%%/*}"
+  hostport="${dest#*@}"; docker_host="${hostport%%:*}"
+  docker_user=""; [[ "$dest" == *@* ]] && docker_user="${dest%@*}"
+  docker_port=""; [[ "$hostport" == *:* ]] && docker_port="${hostport##*:}"
+
+  # The key stays off the volume: it's rewritten from the variable every boot.
+  run_dir=/run/docker-host
+  install -d -o t3 -g t3 -m 700 "$run_dir" "$HOME/.ssh"
+  if [ -n "${DOCKER_SSH_KEY:-}" ]; then
+    key="$DOCKER_SSH_KEY"
+    [[ "$key" == *$'\n'* ]] || key="${key//\\n/$'\n'}"
+    [[ "$key" == *"PRIVATE KEY"* ]] || key="$(printf '%s' "$key" | base64 -d 2>/dev/null)"
+    [[ "$key" == *"PRIVATE KEY"* ]] || echo "DOCKER_SSH_KEY: not a private key (paste the whole file, or base64 of it)"
+    install -o t3 -g t3 -m 600 /dev/null "$run_dir/id"
+    printf '%s\n' "$key" > "$run_dir/id"
+  fi
+  if [ -n "${DOCKER_SSH_KNOWN_HOSTS:-}" ]; then
+    printf '%s\n' "$DOCKER_SSH_KNOWN_HOSTS" > "$run_dir/known_hosts"
+    known_hosts="$run_dir/known_hosts" strict=yes
+  else
+    known_hosts="$HOME/.ssh/known_hosts_docker" strict=accept-new
+  fi
+
+  # The connection is shared (ControlMaster): docker opens one per command.
+  {
+    echo "Host $docker_host"
+    [ -n "$docker_user" ] && echo "  User $docker_user"
+    [ -n "$docker_port" ] && echo "  Port $docker_port"
+    [ -s "$run_dir/id" ] && printf '  IdentityFile %s\n  IdentitiesOnly yes\n' "$run_dir/id"
+    echo "  UserKnownHostsFile $known_hosts"
+    echo "  StrictHostKeyChecking $strict"
+    echo "  ServerAliveInterval 30"
+    echo "  ControlMaster auto"
+    echo "  ControlPath $run_dir/cm-%C"
+    echo "  ControlPersist 10m"
+  } > /etc/ssh/ssh_config.d/docker-host.conf
+
+  # Ports containers publish on the Docker host show up at 127.0.0.1 here.
+  ( as_t3 docker-forward supervise 2>&1 | sed -u 's/^/docker-forward: /' ) &
+  # Testcontainers connects to the Docker host's address; here that's the forward.
+  export TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1
+  echo "Docker: using $DOCKER_HOST"
+fi
+unset DOCKER_SSH_KEY DOCKER_SSH_KNOWN_HOSTS
+
 # nginx on $PORT: /railway-pair is the password-gated pairing page, everything
 # else is T3, which authenticates every API call, WebSocket and terminal itself.
 # A browser without T3's session cookie (t3_session_<hash>, or the legacy

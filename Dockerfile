@@ -25,6 +25,8 @@ ENV OPENCODE_DISABLE_AUTOUPDATE=1
 # isolation boundary).
 ENV T3CODE_SERVER_BROWSER_SANDBOX=0
 
+# docker-ce-cli and plugins: the CLI only. Railway can't run a Docker daemon, so
+# it talks to a remote one (DOCKER_HOST, see start.sh).
 # libnss3..fonts-*: libraries and fonts for T3's built-in headless browser
 # (chrome-headless-shell, which T3 downloads into ~/.t3 on first use).
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -80,8 +82,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod go+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+      > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends gh \
+      docker-ce-cli docker-compose-plugin docker-buildx-plugin \
     && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
@@ -125,10 +133,11 @@ RUN rm -f /etc/apt/apt.conf.d/docker-clean \
 
 COPY railway-pair.mjs railway-pair-password.jpg /opt/
 COPY ["default global agent.md", "/opt/default-global-agent.md"]
-COPY drop-file-cache apt-persist install-agent-instructions /usr/local/bin/
+COPY drop-file-cache apt-persist install-agent-instructions docker-forward /usr/local/bin/
 COPY start.sh /usr/local/bin/start-t3
 RUN chmod +x /usr/local/bin/start-t3 /usr/local/bin/drop-file-cache \
-      /usr/local/bin/apt-persist /usr/local/bin/install-agent-instructions
+      /usr/local/bin/apt-persist /usr/local/bin/install-agent-instructions \
+      /usr/local/bin/docker-forward
 
 WORKDIR /data/workspaces
 EXPOSE 8080

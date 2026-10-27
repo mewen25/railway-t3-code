@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Port forwards between this container and the remote Docker host
+# (DOCKER_HOST=ssh://...), all over one SSH connection that start.sh keeps up
+# with `docker-forward supervise`. Every port a container publishes on the
+# Docker host is forwarded to 127.0.0.1 here automatically; add/reverse are for
+# anything else and are saved on the volume, so they come back after restarts.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: docker-forward list
+       docker-forward add PORT[:HOST_PORT]...  Docker host's HOST_PORT -> 127.0.0.1:PORT here
+       docker-forward reverse PORT...          127.0.0.1:PORT here -> PORT on the Docker host
+                                               (containers: host.docker.internal:PORT)
+       docker-forward remove PORT...           drop saved forwards using PORT
+USAGE
+  exit 2
+}
+
+[[ "${DOCKER_HOST:-}" == ssh://* ]] || { echo "docker-forward: DOCKER_HOST is not set to an ssh:// Docker host" >&2; exit 1; }
+dest="${DOCKER_HOST#ssh://}"; dest="${dest%%/*}"
+host="${dest#*@}"; host="${host%%:*}"
+
+SOCK=/run/docker-host/forward.sock
+AUTO=/run/docker-host/auto-ports
+SAVED="$HOME/.config/docker-forward/saved"  # lines: "L <here> <there>" or "R <here> <there>"
+RESERVED=" 8080 3773 3774 "  # nginx, T3 and the pairing page listen here
+
+mux() { ssh -S "$SOCK" -O "$@" "$host" 2>/dev/null; }
+spec() {  # kind here there -> ssh forward arguments
+  if [ "$1" = L ]; then echo "-L 127.0.0.1:$2:127.0.0.1:$3"; else echo "-R 0.0.0.0:$3:127.0.0.1:$2"; fi
+}
+port() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ] || { echo "docker-forward: bad port '$1'" >&2; exit 2; }; }
+
+# Forward every port published by a running container, and drop forwards for
+# ports that went away so the local port is free again.
+sync_auto() {
+  local ps m lo hi p
+  ps="$(docker ps --format '{{.Ports}}' 2>/dev/null)" || return 0
+  local -A want=()
+  while read -r m; do
+    [ -n "$m" ] || continue
+    lo="${m%-*}"; hi="${m#*-}"
+    for ((p = lo; p <= hi; p++)); do want[$p]=1; done
+  done < <(grep -oE ':[0-9]+(-[0-9]+)?->' <<<"$ps" | tr -d ':>' | sed 's/-$//')
+
+  local -A have=()
+  while read -r p; do [ -n "$p" ] && have[$p]=1; done < "$AUTO"
+  local manual=" $(awk '$1 == "L" { printf "%s ", $2 }' "$SAVED") "
+
+  for p in "${!want[@]}"; do
+    [ -z "${have[$p]:-}" ] || continue
+    if [[ "$RESERVED$manual" == *" $p "* ]]; then
+      echo "not forwarding $p: that port is taken here"
+    elif mux forward $(spec L "$p" "$p"); then
+      echo "forwarding $p"
+    else
+      echo "could not forward $p: is something here already listening on 127.0.0.1:$p?"
+    fi
+    have[$p]=1
+  done
+  for p in "${!have[@]}"; do
+    [ -z "${want[$p]:-}" ] || continue
+    mux cancel $(spec L "$p" "$p") || true
+    unset "have[$p]"
+    echo "stopped forwarding $p"
+  done
+  printf '%s\n' "${!have[@]}" > "$AUTO"
+}
+
+supervise() {
+  mkdir -p "$(dirname "$SAVED")"; touch "$SAVED"
+  while :; do
+    rm -f "$SOCK"; : > "$AUTO"
+    ssh -N -M -S "$SOCK" -o ControlPersist=no -o BatchMode=yes -o ExitOnForwardFailure=no "$host" &
+    local pid=$!
+    for _ in $(seq 30); do mux check && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    if mux check; then
+      echo "connected to $host"
+      while read -r kind here there; do
+        [ -n "$kind" ] && { mux forward $(spec "$kind" "$here" "$there") || echo "could not restore $kind $here $there"; }
+      done < "$SAVED"
+      while kill -0 "$pid" 2>/dev/null; do sync_auto; sleep 3; done
+    else
+      kill "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+    echo "no connection to $host; retrying"
+    sleep 5
+  done
+}
+
+save() {
+  mkdir -p "$(dirname "$SAVED")"; touch "$SAVED"
+  grep -qxF "$*" "$SAVED" || echo "$*" >> "$SAVED"
+  mux forward $(spec "$@") || echo "saved; it starts once the connection to $host is up (or 127.0.0.1:$2 is busy)" >&2
+}
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  supervise) supervise ;;
+  list)
+    echo "automatic (published by containers on $host):"
+    sort -n "$AUTO" 2>/dev/null | sed 's/^/  /'
+    echo "saved:"
+    awk '$1 == "L" { print "  " $2 " here <- " $3 " on the Docker host" }
+         $1 == "R" { print "  " $2 " here -> " $3 " on the Docker host" }' "$SAVED" 2>/dev/null
+    ;;
+  add)
+    [ $# -gt 0 ] || usage
+    for s; do
+      here="${s%%:*}"; there="${s#*:}"; port "$here"; port "$there"
+      [[ "$RESERVED" != *" $here "* ]] || { echo "docker-forward: port $here is used by this container; pick another (add OTHER:$there)" >&2; exit 1; }
+      save L "$here" "$there"
+    done
+    ;;
+  reverse)
+    [ $# -gt 0 ] || usage
+    for p; do port "$p"; save R "$p" "$p"; done
+    ;;
+  remove)
+    [ $# -gt 0 ] || usage
+    for p; do
+      port "$p"
+      while read -r kind here there; do
+        [ "$here" = "$p" ] || [ "$there" = "$p" ] || continue
+        mux cancel $(spec "$kind" "$here" "$there") || true
+        grep -vxF "$kind $here $there" "$SAVED" > "$SAVED.tmp" || true
+        mv "$SAVED.tmp" "$SAVED"
+      done < <(cat "$SAVED" 2>/dev/null)
+    done
+    ;;
+  *) usage ;;
+esac
