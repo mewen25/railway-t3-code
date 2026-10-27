@@ -10,8 +10,8 @@ https://github.com/tpkowastaken/railway-t3-code
 
 1. Add this template
 2. Once the application is deployed, copy **T3_SETUP_PASSWORD** from the service's Variables tab
-3. Open the public link from railway with **/railway-pair** at the end (for example https://your-domain.up.railway.app/railway-pair). You need to click on the instance, settings and there it should be
-4. Sign in with any username and that password, then click **Pair this browser**. For your phone, scan the QR code in the T3 Code app (Settings → Environments → Add). Reload the page for a new link for each device
+3. Open the public link from railway (click the instance, then Settings, and it's under Networking). Until a browser is paired, the link opens the **/railway-pair** page, which also explains where to find the password
+4. Enter that password, then click **Pair this browser**. For your phone, scan the QR code in the T3 Code app (Settings → Environments → Add). Reload the page for a new link for each device
 5. After that press ctrl + j or cmd + j do 
 
 ```

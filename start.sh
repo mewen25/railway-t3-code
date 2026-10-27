@@ -40,7 +40,13 @@ fi
 
 # nginx on $PORT: /railway-pair is the password-gated pairing page, everything
 # else is T3, which authenticates every API call, WebSocket and terminal itself.
+# A browser without T3's session cookie (t3_session_<hash>, or the legacy
+# t3_session) opening / is sent to the pairing page instead of T3's sign-in.
 cat > /etc/nginx/conf.d/t3.conf <<CFG
+map \$http_cookie \$t3_has_session {
+  default 0;
+  "~(^|;)\\s*t3_session(_[0-9a-f]+)?=" 1;
+}
 server {
   listen ${PORT} default_server;
   listen [::]:${PORT} default_server;
@@ -48,6 +54,11 @@ server {
   location = /healthcheck { proxy_pass http://127.0.0.1:3773/.well-known/t3/environment; }
   location = /railway-pair {
     proxy_pass http://127.0.0.1:3774;
+    proxy_set_header Host \$http_host;
+  }
+  location = / {
+    if (\$t3_has_session = 0) { return 302 /railway-pair; }
+    proxy_pass http://127.0.0.1:3773;
     proxy_set_header Host \$http_host;
   }
   location / {
