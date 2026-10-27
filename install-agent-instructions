@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""Put the given markdown file at the top of every agent's global instructions.
+
+The text sits between marker comments and is replaced on every boot, so an
+image update reaches existing volumes. Anything outside the markers (a user's
+own instructions) is left alone.
+"""
+import os
+import re
+import sys
+
+# Global instruction files, relative to $HOME, for the agents T3 Code runs.
+TARGETS = [
+    ".claude/CLAUDE.md",  # Claude Code
+    ".codex/AGENTS.md",  # Codex
+    ".config/opencode/AGENTS.md",  # OpenCode 1.x and 2.x
+    ".gemini/GEMINI.md",  # Antigravity, Gemini CLI (ACP)
+    ".pi/agent/AGENTS.md",  # Pi
+    ".fx/AGENTS.md",  # fx
+]
+
+BEGIN = "<!-- BEGIN railway-t3-code: rewritten on every boot, edit outside this block -->"
+END = "<!-- END railway-t3-code -->"
+managed = re.compile(re.escape(BEGIN) + r".*?" + re.escape(END) + r"\n*", re.S)
+
+with open(sys.argv[1]) as f:
+    block = f"{BEGIN}\n{f.read().strip()}\n{END}\n"
+
+home = os.path.expanduser("~")
+for rel in TARGETS:
+    path = os.path.join(home, rel)
+    try:
+        with open(path) as f:
+            old = f.read()
+    except FileNotFoundError:
+        old = ""
+    rest = managed.sub("", old).lstrip("\n")
+    new = block + ("\n" + rest if rest else "")
+    if new != old:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(new)

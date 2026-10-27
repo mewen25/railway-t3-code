@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# apt packages that survive restarts: everything outside /data is rebuilt from
+# the image, so start.sh reinstalls the packages listed here on every boot.
+set -euo pipefail
+
+LIST=/data/system/apt-packages
+
+usage() {
+  echo "usage: apt-persist install <pkg>... | remove <pkg>... | list" >&2
+  exit 2
+}
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  install)
+    [ $# -gt 0 ] || usage
+    # Lists can be stale (or missing on a fresh volume): refresh only on failure.
+    sudo apt-get install -y "$@" || { sudo apt-get update && sudo apt-get install -y "$@"; }
+    for pkg in "$@"; do
+      grep -qxF -- "$pkg" "$LIST" 2>/dev/null || echo "$pkg" >> "$LIST"
+    done
+    ;;
+  remove)
+    [ $# -gt 0 ] || usage
+    sudo apt-get remove -y "$@"
+    tmp="$(mktemp)"
+    grep -vxF -- "$(printf '%s\n' "$@")" "$LIST" > "$tmp" || true
+    cat "$tmp" > "$LIST" && rm -f "$tmp"
+    ;;
+  list)
+    cat "$LIST" 2>/dev/null || true
+    ;;
+  *)
+    usage
+    ;;
+esac

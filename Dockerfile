@@ -16,7 +16,8 @@ ENV WORKSPACE_DIR=/data/workspaces
 # Global npm installs live in /opt/npm, owned by the t3 user, so T3's in-app
 # "Update" button for Claude/Codex works without root (a redeploy restores the pins).
 ENV NPM_CONFIG_PREFIX=/opt/npm
-ENV PATH=/data/home/.local/bin:/opt/npm/bin:$PATH
+# Tools agents install into $HOME (on the volume) persist; see "default global agent.md".
+ENV PATH=/data/home/.local/bin:/data/home/.cargo/bin:/data/home/go/bin:/data/home/.bun/bin:/opt/npm/bin:$PATH
 ENV DISABLE_AUTOUPDATER=1
 ENV OPENCODE_DISABLE_AUTOUPDATE=1
 # T3's built-in headless browser: Chrome's own sandbox needs kernel features
@@ -100,21 +101,34 @@ RUN curl -fsSL -o /tmp/t3.tgz "https://github.com/pingdotgg/t3code/releases/down
     && t3 --version && claude --version && codex --version && opencode --version
 
 # Agents run as a normal user: Claude Code refuses its full-access mode as root.
-# Passwordless sudo lets them still apt-get what a repo needs.
+# Passwordless sudo lets them still apt-get what a repo needs (`apt-persist`
+# to keep it across restarts).
 # nginx: `auto` sizes from the host's cores on Railway, not the container's limit.
 RUN userdel -r node \
     && useradd -u 1000 -U -d /data/home -M -s /bin/bash t3 \
     && chown -R t3:t3 /opt/npm \
     && echo 't3 ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/t3 \
     && chmod 440 /etc/sudoers.d/t3 \
-    && echo 'export PATH="$HOME/.local/bin:/opt/npm/bin:$PATH"' > /etc/profile.d/local-bin.sh \
+    && echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/go/bin:$HOME/.bun/bin:/opt/npm/bin:$PATH"' > /etc/profile.d/local-bin.sh \
     && sed -i 's/^worker_processes .*/worker_processes 2;/' /etc/nginx/nginx.conf \
     && rm -f /etc/nginx/sites-enabled/default
 
+# apt keeps its package lists and downloaded .debs on the volume, so start.sh can
+# reinstall the packages from `apt-persist` on every boot quickly and mostly
+# offline. The lock timeout makes an agent's apt-get wait for that restore.
+RUN rm -f /etc/apt/apt.conf.d/docker-clean \
+    && printf '%s\n' \
+      'Dir::Cache::Archives "/data/system/apt/archives/";' \
+      'Dir::State::Lists "/data/system/apt/lists/";' \
+      'DPkg::Lock::Timeout "300";' \
+      > /etc/apt/apt.conf.d/90persist-on-volume
+
 COPY railway-pair.mjs railway-pair-password.jpg /opt/
-COPY drop-file-cache /usr/local/bin/drop-file-cache
+COPY ["default global agent.md", "/opt/default-global-agent.md"]
+COPY drop-file-cache apt-persist install-agent-instructions /usr/local/bin/
 COPY start.sh /usr/local/bin/start-t3
-RUN chmod +x /usr/local/bin/start-t3 /usr/local/bin/drop-file-cache
+RUN chmod +x /usr/local/bin/start-t3 /usr/local/bin/drop-file-cache \
+      /usr/local/bin/apt-persist /usr/local/bin/install-agent-instructions
 
 WORKDIR /data/workspaces
 EXPOSE 8080

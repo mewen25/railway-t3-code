@@ -28,6 +28,15 @@ for claude.
 
 You are free to setup other developer tools, mcps and connectors as you wish. I recommend using claude or codex to setup the other tools.
 
+## Installing Things That Persist
+
+Only the volume at `/data` survives restarts and redeploys. Everything else is rebuilt from the image. Agents get told how to work with this on every boot: [`default global agent.md`](default%20global%20agent.md) is placed at the top of the global instructions for Claude Code, Codex, OpenCode, Antigravity/Gemini, Pi and fx. Your own text in those files, outside the marked block, is kept.
+
+- Tools installed into `$HOME` (`/data/home`) persist: `uv tool install`, `npm install -g --prefix ~/.local`, rustup, `go install`, bun, ...
+- `apt-persist install <pkg>` installs a system package and reinstalls it on every boot (`apt-persist remove`, `apt-persist list`). The list is `/data/system/apt-packages`. apt's lists and downloads are kept in `/data/system/apt`, so reinstalling is quick.
+- `/data/system/boot.sh` runs as root on every boot, before those packages are reinstalled. Use it for other system changes, such as adding an apt repository.
+- The restore runs in the background after boot. Its log is `/data/system/restore.log`.
+
 ## Common Use Cases
 
 - Going to work and then closing your laptop

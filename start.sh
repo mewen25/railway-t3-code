@@ -20,6 +20,43 @@ as_t3() {
     env HOME="$HOME" USER=t3 LOGNAME=t3 SHELL=/bin/bash "$@"
 }
 
+# Tell every agent how this container persists things ("default global agent.md").
+as_t3 install-agent-instructions /opt/default-global-agent.md || echo "agent instructions: install failed"
+
+# Everything outside /data is rebuilt from the image, so system changes agents
+# want to keep are replayed from the volume: root's boot.sh, then the packages
+# `apt-persist` recorded (from apt's lists and .debs, also kept on the volume).
+SYSTEM_DIR=/data/system
+mkdir -p "$SYSTEM_DIR/apt/archives/partial" "$SYSTEM_DIR/apt/lists/partial"
+chown _apt:root "$SYSTEM_DIR/apt/archives/partial" "$SYSTEM_DIR/apt/lists/partial"
+[ -e "$SYSTEM_DIR/apt-packages" ] || install -o t3 -g t3 -m 644 /dev/null "$SYSTEM_DIR/apt-packages"
+[ -e "$SYSTEM_DIR/boot.sh" ] || install -o t3 -g t3 -m 644 /dev/stdin "$SYSTEM_DIR/boot.sh" <<'BOOT'
+# Runs as root on every boot, before the apt-persist packages are reinstalled.
+# Put system changes here that must survive restarts, e.g. an apt repository:
+#   curl -fsSL https://example.com/key.gpg | gpg --dearmor -o /usr/share/keyrings/example.gpg
+#   echo "deb [signed-by=/usr/share/keyrings/example.gpg] https://example.com/apt stable main" > /etc/apt/sources.list.d/example.list
+BOOT
+
+restore_system() {
+  set +e
+  echo "restore started $(date -Is)"
+  bash "$SYSTEM_DIR/boot.sh" || echo "boot.sh failed"
+  local pkgs
+  mapfile -t pkgs < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' "$SYSTEM_DIR/apt-packages")
+  if [ ${#pkgs[@]} -gt 0 ]; then
+    # Stale lists or one bad name shouldn't cost the rest: refresh, then go one by one.
+    apt-get install -y "${pkgs[@]}" || {
+      apt-get update
+      apt-get install -y "${pkgs[@]}" || for p in "${pkgs[@]}"; do apt-get install -y "$p" || echo "FAILED: $p"; done
+    }
+    apt-get autoclean
+  fi
+  echo "restore finished $(date -Is)"
+}
+# In the background so T3 is up within the healthcheck; apt's lock timeout
+# makes an agent's apt-get wait for it.
+restore_system > "$SYSTEM_DIR/restore.log" 2>&1 &
+
 # Password for /railway-pair. Set T3_SETUP_PASSWORD in Railway's Variables tab;
 # deploys without it get one generated once and printed below, and the page
 # asks the user to set the variable.
