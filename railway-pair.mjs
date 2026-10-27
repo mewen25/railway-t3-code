@@ -5,6 +5,10 @@
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+// Screenshot of where T3_SETUP_PASSWORD is, shown on the sign-in page.
+const passwordImage = readFileSync(new URL("./railway-pair-password.jpg", import.meta.url));
 
 const sha256 = (s) => createHash("sha256").update(s).digest();
 const expected = sha256(process.env.T3_SETUP_PASSWORD ?? "");
@@ -54,16 +58,18 @@ const layout = (title, body) => `<!doctype html>
 <title>${title}</title>
 <style>
   body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; color: #111; background: #fff }
+  a { color: #7c3aed; font-weight: 600; text-underline-offset: .2em }
   a.button, button { display: inline-block; padding: .7rem 1.2rem; background: #111; color: #fff; border: 0; border-radius: .5rem; font: inherit; text-decoration: none; cursor: pointer }
   input { font: inherit; padding: .6rem .8rem; border: 1px solid #999; border-radius: .5rem; width: 100%; max-width: 22rem; box-sizing: border-box; background: inherit; color: inherit }
   code { word-break: break-all; background: #f2f2f2; padding: .2rem .4rem; border-radius: .3rem }
   ol li { margin: .3rem 0 }
+  img { width: 100%; height: auto; border-radius: .5rem; border: 1px solid #8884 }
   .error { color: #b00020; font-weight: 600 }
   .muted { opacity: .75 }
   svg { width: 16rem; height: auto }
   @media (prefers-color-scheme: dark) {
     body { background: #111; color: #eee } a.button, button { background: #eee; color: #111 }
-    code { background: #222 } .error { color: #ff6b81 }
+    a { color: #c4b5fd } code { background: #222 } .error { color: #ff6b81 }
   }
 </style>
 ${body}`;
@@ -87,6 +93,8 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
   <li>Find <code>T3_SETUP_PASSWORD</code> and click the copy icon next to it (or the eye icon to show it).</li>
   <li>Paste it above.</li>
 </ol>
+<p><img src="/railway-pair/password.jpg" width="1200" height="407"
+  alt="Railway project canvas with the railway-t3-code service selected, its Variables tab open, and the copy icon next to T3_SETUP_PASSWORD"></p>
 <p class="muted">No <code>T3_SETUP_PASSWORD</code> variable? Then a password was generated on first boot: open the
 service's <b>Deployments</b> tab, view the latest deployment's logs and look for the line
 <code>using generated password</code>. You can add the variable to choose your own and redeploy.</p>`,
@@ -117,6 +125,11 @@ const html = (res, status, body, headers = {}) => {
 
 createServer(async (req, res) => {
   const proto = (req.headers["x-forwarded-proto"] ?? "http").split(",")[0].trim();
+
+  if (req.url === "/railway-pair/password.jpg") {
+    res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=86400" });
+    return res.end(passwordImage);
+  }
 
   if (req.method === "POST") {
     let password = "";

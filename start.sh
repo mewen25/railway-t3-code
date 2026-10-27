@@ -51,8 +51,10 @@ server {
   listen ${PORT} default_server;
   listen [::]:${PORT} default_server;
   client_max_body_size 200m;
+  # Relative Location headers: nginx would otherwise add its internal :${PORT}.
+  absolute_redirect off;
   location = /healthcheck { proxy_pass http://127.0.0.1:3773/.well-known/t3/environment; }
-  location = /railway-pair {
+  location ~ ^/railway-pair(/password\.jpg)?\$ {
     proxy_pass http://127.0.0.1:3774;
     proxy_set_header Host \$http_host;
   }

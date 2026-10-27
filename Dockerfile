@@ -111,7 +111,7 @@ RUN userdel -r node \
     && sed -i 's/^worker_processes .*/worker_processes 2;/' /etc/nginx/nginx.conf \
     && rm -f /etc/nginx/sites-enabled/default
 
-COPY railway-pair.mjs /opt/railway-pair.mjs
+COPY railway-pair.mjs railway-pair-password.jpg /opt/
 COPY drop-file-cache /usr/local/bin/drop-file-cache
 COPY start.sh /usr/local/bin/start-t3
 RUN chmod +x /usr/local/bin/start-t3 /usr/local/bin/drop-file-cache
