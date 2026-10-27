@@ -13,6 +13,8 @@ const passwordImage = readFileSync(new URL("./railway-pair-password.jpg", import
 const sha256 = (s) => createHash("sha256").update(s).digest();
 const expected = sha256(process.env.T3_SETUP_PASSWORD ?? "");
 if (!process.env.T3_SETUP_PASSWORD) throw new Error("T3_SETUP_PASSWORD is required");
+// start.sh generated the password because the variable isn't set in Railway.
+const generated = process.env.T3_SETUP_PASSWORD_GENERATED === "1";
 
 // Signing in sets a short-lived cookie so reloading the page mints a new link
 // without asking again. The key is per process: a restart signs everyone out.
@@ -74,17 +76,22 @@ const layout = (title, body) => `<!doctype html>
 </style>
 ${body}`;
 
+const passwordForm = (error) => `${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+<form method="post" action="/railway-pair">
+  <p><label for="password"><b>Setup password</b></label><br>
+  <input id="password" name="password" type="password" autocomplete="current-password" autofocus required></p>
+  <p><button type="submit">Continue</button></p>
+</form>`;
+
+const variablesImage = `<p><img src="/railway-pair/password.jpg" width="1200" height="407"
+  alt="Railway project canvas with the railway-t3-code service selected, its Variables tab open, and the copy icon next to T3_SETUP_PASSWORD"></p>`;
+
 const loginPage = (error) =>
   layout(
     "Sign in to pair with T3 Code",
     `<h1>Pair a device with T3 Code</h1>
 <p>This browser isn't connected to this T3 Code server yet. Enter the setup password to get a pairing link.</p>
-${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
-<form method="post" action="/railway-pair">
-  <p><label for="password"><b>Setup password</b></label><br>
-  <input id="password" name="password" type="password" autocomplete="current-password" autofocus required></p>
-  <p><button type="submit">Continue</button></p>
-</form>
+${passwordForm(error)}
 <h2>Where do I find the password?</h2>
 <ol>
   <li>Open your project on <a href="https://railway.com/dashboard" target="_blank" rel="noopener">railway.com</a>.</li>
@@ -93,12 +100,35 @@ ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
   <li>Find <code>T3_SETUP_PASSWORD</code> and click the copy icon next to it (or the eye icon to show it).</li>
   <li>Paste it above.</li>
 </ol>
-<p><img src="/railway-pair/password.jpg" width="1200" height="407"
-  alt="Railway project canvas with the railway-t3-code service selected, its Variables tab open, and the copy icon next to T3_SETUP_PASSWORD"></p>
-<p class="muted">No <code>T3_SETUP_PASSWORD</code> variable? Then a password was generated on first boot: open the
-service's <b>Deployments</b> tab, view the latest deployment's logs and look for the line
-<code>using generated password</code>. You can add the variable to choose your own and redeploy.</p>`,
+${variablesImage}`,
   );
+
+const setPasswordPage = (error) =>
+  layout(
+    "Set a setup password for T3 Code",
+    `<h1>Set a setup password first</h1>
+<p>The <code>T3_SETUP_PASSWORD</code> variable isn't set on this Railway service, so the server is using a password
+it generated itself. Set your own to pair devices with this T3 Code server:</p>
+<ol>
+  <li>Open your project on <a href="https://railway.com/dashboard" target="_blank" rel="noopener">railway.com</a>.</li>
+  <li>Click the T3 Code service on the canvas (named <b>railway-t3-code</b> unless you renamed it).</li>
+  <li>Open the <b>Variables</b> tab and click <b>New Variable</b>.</li>
+  <li>Name it <code>T3_SETUP_PASSWORD</code>, enter a long password as the value and click <b>Add</b>.</li>
+  <li>Click <b>Deploy</b> to apply the change. Once the service is back online, reload this page and sign in with that password.</li>
+</ol>
+${variablesImage}
+<details${error ? " open" : ""}>
+  <summary>Use the generated password instead</summary>
+  <p>Open the service's <b>Deployments</b> tab, view the latest deployment's logs and copy the password from the line
+  <code>T3_SETUP_PASSWORD is not set; using generated password: &hellip;</code></p>
+  ${passwordForm(error)}
+</details>`,
+  );
+
+const signInPage = generated ? setPasswordPage : loginPage;
+const wrongPassword = generated
+  ? "That password isn't right. Copy it again from the deploy logs."
+  : "That password isn't right. Copy it again from the Variables tab.";
 
 const pairPage = (link, qrSvg) =>
   layout(
@@ -136,11 +166,11 @@ createServer(async (req, res) => {
     try {
       password = new URLSearchParams(await readBody(req)).get("password") ?? "";
     } catch {
-      return html(res, 400, loginPage("Something went wrong, please try again."));
+      return html(res, 400, signInPage("Something went wrong, please try again."));
     }
     if (!timingSafeEqual(sha256(password), expected)) {
       await sleep(1000);
-      return html(res, 401, loginPage("That password isn't right. Copy it again from the Variables tab."));
+      return html(res, 401, signInPage(wrongPassword));
     }
     const secure = proto === "https" ? "; Secure" : "";
     res.writeHead(303, {
@@ -151,7 +181,7 @@ createServer(async (req, res) => {
     return res.end();
   }
 
-  if (!validSession(req.headers.cookie)) return html(res, 200, loginPage());
+  if (!validSession(req.headers.cookie)) return html(res, 200, signInPage());
 
   try {
     const issued = JSON.parse(

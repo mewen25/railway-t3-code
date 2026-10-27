@@ -21,8 +21,11 @@ as_t3() {
 }
 
 # Password for /railway-pair. Set T3_SETUP_PASSWORD in Railway's Variables tab;
-# deploys without it get one generated once and printed below.
+# deploys without it get one generated once and printed below, and the page
+# asks the user to set the variable.
+T3_SETUP_PASSWORD_GENERATED=0
 if [ -z "${T3_SETUP_PASSWORD:-}" ]; then
+  T3_SETUP_PASSWORD_GENERATED=1
   pw_file="$HOME/.config/railway-pair-password"
   [ -s "$pw_file" ] || { head -c 24 /dev/urandom | base64 | tr -d '/+=' > "$pw_file"; chown t3:t3 "$pw_file"; chmod 600 "$pw_file"; }
   T3_SETUP_PASSWORD="$(cat "$pw_file")"
@@ -77,7 +80,8 @@ server {
 CFG
 nginx
 
-T3_SETUP_PASSWORD="$T3_SETUP_PASSWORD" as_t3 node /opt/railway-pair.mjs &
+T3_SETUP_PASSWORD="$T3_SETUP_PASSWORD" T3_SETUP_PASSWORD_GENERATED="$T3_SETUP_PASSWORD_GENERATED" \
+  as_t3 node /opt/railway-pair.mjs &
 unset T3_SETUP_PASSWORD
 
 # Railway counts the kernel's cache of files this container touched as its
