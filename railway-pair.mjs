@@ -35,6 +35,23 @@ const validSession = (cookieHeader = "") => {
   return got.length === want.length && timingSafeEqual(got, want);
 };
 
+// Wrong passwords lock sign-in for everyone, not per IP (guesses can come from
+// many addresses): after 5 in a row for a minute, doubling with each further
+// miss up to an hour. Kept in memory, so restarting the service clears it.
+const FREE_ATTEMPTS = 5;
+const MAX_LOCK_MS = 60 * 60_000;
+let failures = 0;
+let lockedUntil = 0;
+const recordFailure = () => {
+  failures++;
+  if (failures < FREE_ATTEMPTS) return;
+  const lockMs = Math.min(60_000 * 2 ** (failures - FREE_ATTEMPTS), MAX_LOCK_MS);
+  lockedUntil = Date.now() + lockMs;
+  console.error(`railway-pair: ${failures} wrong passwords in a row; sign-in locked for ${lockMs / 60_000} min`);
+};
+const lockedMessage = () =>
+  `Too many wrong passwords. Try again in ${Math.ceil((lockedUntil - Date.now()) / 60_000)} min, or restart the service on Railway to unlock now.`;
+
 const run = (cmd, args) =>
   new Promise((resolve, reject) =>
     execFile(cmd, args, { timeout: 30_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout))),
@@ -168,10 +185,16 @@ createServer(async (req, res) => {
     } catch {
       return html(res, 400, signInPage("Something went wrong, please try again."));
     }
-    if (!timingSafeEqual(sha256(password), expected)) {
-      await sleep(1000);
-      return html(res, 401, signInPage(wrongPassword));
+    if (Date.now() < lockedUntil) {
+      const retryAfter = Math.ceil((lockedUntil - Date.now()) / 1000);
+      return html(res, 429, signInPage(lockedMessage()), { "Retry-After": String(retryAfter) });
     }
+    if (!timingSafeEqual(sha256(password), expected)) {
+      recordFailure();
+      await sleep(1000);
+      return html(res, 401, signInPage(Date.now() < lockedUntil ? lockedMessage() : wrongPassword));
+    }
+    failures = 0;
     const secure = proto === "https" ? "; Secure" : "";
     res.writeHead(303, {
       Location: "/railway-pair",
