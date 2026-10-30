@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Pin the Dockerfile to a T3 release: sets T3_VERSION and T3_SHA256 together,
+# taking the hash from the release's SHA256SUMS so the build's check passes.
+set -euo pipefail
+
+[ $# -eq 1 ] || { echo "usage: ./bump-t3 <version>   e.g. ./bump-t3 0.1.6" >&2; exit 2; }
+version="${1#v}"
+asset="t3-${version}-linux-x64.tar.gz"
+dockerfile="$(dirname "$0")/Dockerfile"
+
+sums=$(curl -fsSL "https://github.com/pingdotgg/t3code/releases/download/v${version}/SHA256SUMS") \
+  || { echo "no SHA256SUMS for v${version} (does the release exist?)" >&2; exit 1; }
+sha=$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1 }' <<<"$sums")
+[[ "$sha" =~ ^[0-9a-f]{64}$ ]] || { echo "$asset not listed in v${version} SHA256SUMS" >&2; exit 1; }
+
+sed -i.bak \
+  -e "s/^ARG T3_VERSION=.*/ARG T3_VERSION=${version}/" \
+  -e "s/^ARG T3_SHA256=.*/ARG T3_SHA256=${sha}/" \
+  "$dockerfile"
+rm -f "$dockerfile.bak"
+
+grep -E '^ARG T3_(VERSION|SHA256)=' "$dockerfile"
